@@ -12,5 +12,14 @@ export default defineNuxtConfig({
     css: [
         '@fortawesome/fontawesome-svg-core/styles.css'
     ],
-    components: true
+    components: true,
+    app: {
+        head: {
+            script: [
+                {
+                    src: 'js/opencv.js'
+                }
+            ]
+        }
+    }
 })

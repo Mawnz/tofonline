@@ -6,7 +6,7 @@
         <div :class="[!data.video ? 'hidden' : '']" class="flex flex-col justify-stretch items-center">
             <fa-icon v-if="data.loading" class="animate-spin text-5xl" :icon="['fa', 'fa-circle-notch']"></fa-icon>
             <canvas class="w-[80%]" id="videoCanvas"></canvas>
-            <span>{{ tof.elapsedTime }}</span>
+            <span>{{ tof.elapsedTime / 1000 }}s</span>
             <div class="flex justify-between w-full px-20 py-5">
                 <button v-if="data.video"
                     class="text-secondary-light bg-primary-light dark:text-secondary-dark dark:bg-primary-dark font-bold py-3 px-5 rounded-full float-right"
@@ -88,15 +88,22 @@ const interact = reactive({
 })
 
 //
+// Data related to opencv
+//
+const opencv = reactive({
+
+});
+
+//
 // computed
 //
-// elapsed time takes all time in the bed, subtracts that from total time spend from "start" to now
-// const elapsedTime = computed(() => Date.now() - tof.jumps[0].timeLeave - tof.jumps.reduce((time, jump) => time + (jump.timeLeave - jump.timeEnter), 0));
+// Nothing here...
+
 //
 // Methods
 //
 async function timerCallback(ts) {
-    if(!data.videoEl.ended) {
+    if (!data.videoEl.ended) {
         computeFrame(ts);
         requestAnimationFrame(timerCallback);
     }
@@ -117,7 +124,7 @@ async function computeFrame(ts) {
         data.prevFrame = frame;
 
         if (tof.timerActive) {
-            tof.elapsedTime = Math.round(ts - tof.jumps[0].timeLeave - tof.jumps.reduce((time, jump) => time + (jump.timeLeave - jump.timeLeave), 0));
+            tof.elapsedTime = Math.round(ts - tof.jumps[0].timeLeave - tof.jumps.reduce((time, jump) => time + (jump.timeLeave - jump.timeEnter), 0));
         }
 
         if (moved && tof.timerActive) {
@@ -139,7 +146,7 @@ async function computeFrame(ts) {
             // Acceptable diff is 280ms
         } else if (!moved && !tof.timerActive && !tof.ended) {
             const diff = ts - tof.jumps[tof.currentJump].timeEnter;
-            if(diff > 280) {
+            if (diff > 290) {
                 tof.timerActive = true;
                 tof.jumps[tof.currentJump].timeLeave = ts;
             }
@@ -158,7 +165,7 @@ function checkMovement(imData) {
         const gDiff = Math.abs(imData[i + 1] - data.prevFrame[i + 1]);
         const bDiff = Math.abs(imData[i + 2] - data.prevFrame[i + 2]);
 
-        if (rDiff + gDiff + bDiff > 350) { // Adjust the threshold for movement sensitivity
+        if (rDiff + gDiff + bDiff > 300) { // Adjust the threshold for movement sensitivity
             movementCount++;
         }
     }
@@ -182,8 +189,8 @@ function start() {
     data.playing = false;
     // remove listeners
     document.querySelector('video').removeEventListener('play', envSetup);
-    startStop();
-    requestAnimationFrame(timerCallback);
+    setupOpencv();
+    //requestAnimationFrame(timerCallback);
 }
 
 function startStop() {
@@ -217,7 +224,6 @@ async function envSetup() {
     });
 
     interact.canvas.add(interact.stillImg);
-
 }
 
 function setupFabric() {
@@ -240,8 +246,8 @@ function setupFabric() {
         top: data.height / 1.3,
         fill: 'rgba(180, 255, 0, 0.5)',
         strokeWidth: '2',
-        width: data.width / 3,
-        height: data.height / 8,
+        width: data.width / 5,
+        height: data.height / 3,
         objectCaching: false,
         stroke: 'lightgreen',
         strokeWidth: 2,
@@ -255,22 +261,102 @@ function setupFabric() {
     });
 }
 
+async function setupOpencv() {
+    // https://docs.opencv.org/3.4/df/def/tutorial_js_meanshift.html
+    const video = document.querySelector('video');
+    
+    video.currentTime = 0;
+    video.width = data.width;
+    video.height = data.height;
+
+    let cap = new cv.VideoCapture(video);
+    let frame = new cv.Mat(data.height, data.width, cv.CV_8UC4);
+    cap.read(frame);
+    let trackWindow = new cv.Rect(
+        interact.rect.left,
+        interact.rect.top,
+        interact.rect.width,
+        interact.rect.height
+    );
+    // set up the ROI for tracking
+    let roi = frame.roi(trackWindow);
+    let hsvRoi = new cv.Mat();
+    cv.cvtColor(roi, hsvRoi, cv.COLOR_RGBA2RGB);
+    cv.cvtColor(hsvRoi, hsvRoi, cv.COLOR_RGB2HSV);
+    let mask = new cv.Mat();
+    let lowScalar = new cv.Scalar(30, 30, 0);
+    let highScalar = new cv.Scalar(180, 180, 180);
+    let low = new cv.Mat(hsvRoi.rows, hsvRoi.cols, hsvRoi.type(), lowScalar);
+    let high = new cv.Mat(hsvRoi.rows, hsvRoi.cols, hsvRoi.type(), highScalar);
+    cv.inRange(hsvRoi, low, high, mask);
+    let roiHist = new cv.Mat();
+    let hsvRoiVec = new cv.MatVector();
+    hsvRoiVec.push_back(hsvRoi);
+    cv.calcHist(hsvRoiVec, [0], mask, roiHist, [180], [0, 180]);
+    cv.normalize(roiHist, roiHist, 0, 255, cv.NORM_MINMAX);
+    // delete useless mats.
+    roi.delete(); hsvRoi.delete(); mask.delete(); low.delete(); high.delete(); hsvRoiVec.delete();
+    // Setup the termination criteria, either 10 iteration or move by at least 1 pt
+    let termCrit = new cv.TermCriteria(cv.TERM_CRITERIA_EPS | cv.TERM_CRITERIA_COUNT, 10, 1);
+
+    let hsv = new cv.Mat(video.height, video.width, cv.CV_8UC3);
+    let hsvVec = new cv.MatVector();
+    hsvVec.push_back(hsv);
+    let dst = new cv.Mat();
+    let trackBox = null;
+    
+    let streaming = true;
+    function processVideo() {
+        try {
+            if (!streaming) {
+                // clean and stop.
+                frame.delete(); dst.delete(); hsvVec.delete(); roiHist.delete(); hsv.delete();
+                return;
+            }
+
+            // start processing.
+            cap.read(frame);
+            cv.cvtColor(frame, hsv, cv.COLOR_RGBA2RGB);
+            cv.cvtColor(hsv, hsv, cv.COLOR_RGB2HSV);
+            cv.calcBackProject(hsvVec, [0], roiHist, dst, [0, 180], 1);
+
+            // apply camshift to get the new location
+            [trackBox, trackWindow] = cv.CamShift(dst, trackWindow, termCrit);
+
+            // Draw it on image
+            let pts = cv.rotatedRectPoints(trackBox);
+            cv.line(frame, pts[0], pts[1], [255, 0, 0, 255], 3);
+            cv.line(frame, pts[1], pts[2], [255, 0, 0, 255], 3);
+            cv.line(frame, pts[2], pts[3], [255, 0, 0, 255], 3);
+            cv.line(frame, pts[3], pts[0], [255, 0, 0, 255], 3);
+            cv.imshow('videoCanvas', frame);
+
+            // schedule the next one.
+            if(!video.ended) {
+                requestAnimationFrame(processVideo);
+            }
+        } catch (err) {
+            console.log(err)
+        }
+    };
+    video.play();
+    // schedule the first one.
+    requestAnimationFrame(processVideo);
+}
+
+
 //
 // Watchers
 //
 watch(() => data.video, () => {
     data.videoEl = document.querySelector('video');
-    // data.canvas = document.querySelector('#videoCanvas');
-    // data.ctx = data.canvas.getContext('2d', {
-    //     willReadFrequently: true
-    // });
 
     document.querySelector('video').addEventListener('loadedmetadata', function () {
         data.width = this.videoWidth;
         data.height = this.videoHeight;
         data.f = this.videoHeight / this.videoWidth;
-        // data.canvas.height = data.canvas.width * data.f;
         this.playbackRate = 1;
+
         setupFabric();
 
         sleep(10)
