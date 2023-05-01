@@ -1,4 +1,4 @@
-# ToF Online amazing online tof timer full auto :wow:
+# ToF Online amazing online tof timer full auto :sunglasses:
 
 ## Setup
 
