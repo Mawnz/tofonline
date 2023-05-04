@@ -43,6 +43,8 @@
 <script setup>
 import { fabric } from 'fabric';
 
+import KNN from '~/utils/KNN';
+
 const sleep = (ms) => new Promise(resolve => setTimeout(() => resolve(), ms));
 
 //
@@ -268,23 +270,61 @@ async function setupOpencv() {
     video.width = data.width;
     video.height = data.height;
 
-    const bgSubtractor = new cv.BackgroundSubtractorMOG2();
+    // const bgSubtractor = new cv.BackgroundSubtractorMOG2();
+    // const bgSubtractor = new KNN();
+
+    const dims = {
+        height: interact.rect.getScaledHeight(),
+        width: interact.rect.getScaledWidth()
+    }
+
+    let trackWindow = new cv.Rect(
+        interact.rect.left,
+        interact.rect.top,
+        dims.width, dims.height
+    );
 
     let cap = new cv.VideoCapture(video);
     let frame = new cv.Mat(data.height, data.width, cv.CV_8UC4);
-
-    // Initialize the background model using the first frame
     cap.read(frame);
 
-    let trackWindow = null;
-    let roiHist = null;
     let hsv = new cv.Mat(data.height, data.width, cv.CV_8UC4);
+
+    let roiHist = null;
     let hsvVec = null;
     let dst = null;
     let trackBox = null;
-
     let termCrit = new cv.TermCriteria(cv.TERM_CRITERIA_EPS | cv.TERM_CRITERIA_COUNT, 10, 1);
 
+    let roi = frame.roi(trackWindow);
+    let hsvRoi = new cv.Mat();
+    cv.cvtColor(roi, hsvRoi, cv.COLOR_RGBA2RGB);
+    cv.cvtColor(hsvRoi, hsvRoi, cv.COLOR_RGB2HSV);
+    let mask = new cv.Mat();
+    let lowScalar = new cv.Scalar(30, 30, 0);
+    let highScalar = new cv.Scalar(180, 180, 180);
+    let low = new cv.Mat(hsvRoi.rows, hsvRoi.cols, hsvRoi.type(), lowScalar);
+    let high = new cv.Mat(hsvRoi.rows, hsvRoi.cols, hsvRoi.type(), highScalar);
+
+    cv.inRange(hsvRoi, low, high, mask);
+
+    // Calculate histogram of the ROI
+    let hsvRoiVec = new cv.MatVector();
+    hsvRoiVec.push_back(hsvRoi);
+    roiHist = new cv.Mat();
+    cv.calcHist(hsvRoiVec, [0], mask, roiHist, [180], [0, 180]);
+    cv.normalize(roiHist, roiHist, 0, 255, cv.NORM_MINMAX);
+
+    roi.delete();
+    hsvRoi.delete();
+    mask.delete();
+    low.delete();
+    high.delete();
+    hsvRoiVec.delete();
+
+    hsvVec = new cv.MatVector();
+    hsvVec.push_back(hsv);
+    dst = new cv.Mat();
     function processVideo() {
         try {
             if (tof.ended) {
@@ -301,77 +341,30 @@ async function setupOpencv() {
 
             // Read the next frame
             cap.read(frame);
-            let thresholdedMask = new cv.Mat();
-            cv.threshold(frame, thresholdedMask, 100, 200, cv.THRESH_BINARY);
+            // Convert the frame to HSV
+            cv.cvtColor(frame, hsv, cv.COLOR_RGBA2RGB);
+            cv.cvtColor(hsv, hsv, cv.COLOR_RGB2HSV);
+            cv.calcBackProject(hsvVec, [0], roiHist, dst, [0, 180], 1);
 
-            // Perform background subtraction to obtain the foreground mask
-            let fgMask = new cv.Mat();
-            bgSubtractor.apply(thresholdedMask, fgMask);
-
-            // Check if trackWindow exists, if not, set it to the initial location
-            if (!trackWindow) {
-                trackWindow = new cv.Rect(
-                    interact.rect.left,
-                    interact.rect.top,
-                    interact.rect.width,
-                    interact.rect.height
-                );
-                // Set up the ROI for tracking
-                let roi = thresholdedMask.roi(trackWindow);
-                let hsvRoi = new cv.Mat();
-                cv.cvtColor(roi, hsvRoi, cv.COLOR_RGBA2RGB);
-                cv.cvtColor(hsvRoi, hsvRoi, cv.COLOR_RGB2HSV);
-                let mask = new cv.Mat();
-                let lowScalar = new cv.Scalar(0, 0, 0);
-                let highScalar = new cv.Scalar(255, 255, 255);
-                let low = new cv.Mat(hsvRoi.rows, hsvRoi.cols, hsvRoi.type(), lowScalar);
-                let high = new cv.Mat(hsvRoi.rows, hsvRoi.cols, hsvRoi.type(), highScalar);
-                cv.inRange(hsvRoi, low, high, mask);
-
-                // Calculate histogram of the ROI
-                let hsvRoiVec = new cv.MatVector();
-                hsvRoiVec.push_back(hsvRoi);
-                roiHist = new cv.Mat();
-                cv.calcHist(hsvRoiVec, [0], mask, roiHist, [255], [0, 255]);
-                cv.normalize(roiHist, roiHist, 0, 255, cv.NORM_MINMAX);
-
-                // Delete unnecessary mats
-                // roi.delete();
-                // hsvRoi.delete();
-                // mask.delete();
-                // low.delete();
-                // high.delete();
-                // hsvRoiVec.delete();
-
-                // Set up the necessary mats for tracking
-                hsvVec = new cv.MatVector();
-                hsvVec.push_back(hsv);
-                dst = new cv.Mat();
-            } else {
-                // Convert the frame to HSV
-                cv.cvtColor(thresholdedMask, hsv, cv.COLOR_RGBA2RGB);
-                cv.cvtColor(hsv, hsv, cv.COLOR_RGB2HSV);
-                cv.calcBackProject(hsvVec, [0], roiHist, dst, [0, 255], 1);
-
-                // Apply CamShift to get the new location
-                trackBox = new cv.Rect();
-                [trackBox, trackWindow] = cv.CamShift(dst, trackWindow, termCrit);
-                if (trackWindow.width < interact.rect.width || trackWindow.width > interact.rect.width) {
-                    trackWindow.width = interact.rect.width;
-                }
-                if (trackWindow.height < interact.rect.height || trackWindow.height > interact.rect.height) {
-                    trackWindow.height = interact.rect.height;
-                }
+            // Apply CamShift to get the new location
+            trackBox = new cv.Rect();
+            [trackBox, trackWindow] = cv.CamShift(dst, trackWindow, termCrit);
+            // if (trackWindow.width < dims.width || trackWindow.width > dims.width) {
+            //     trackWindow.width = dims.width;
+            // }
+            // if (trackWindow.height < dims.height || trackWindow.height > dims.height) {
+            //     trackWindow.height = dims.height;
+            // }
 
 
-                // Draw the tracking box on the frame
-                // Draw it on image
-                let pts = cv.rotatedRectPoints(trackBox);
-                cv.line(frame, pts[0], pts[1], [255, 0, 0, 255], 3);
-                cv.line(frame, pts[1], pts[2], [255, 0, 0, 255], 3);
-                cv.line(frame, pts[2], pts[3], [255, 0, 0, 255], 3);
-                cv.line(frame, pts[3], pts[0], [255, 0, 0, 255], 3);
-            }
+            // Draw the tracking box on the frame
+            // Draw it on image
+            let pts = cv.rotatedRectPoints(trackBox);
+            cv.line(frame, pts[0], pts[1], [255, 0, 0, 255], 3);
+            cv.line(frame, pts[1], pts[2], [255, 0, 0, 255], 3);
+            cv.line(frame, pts[2], pts[3], [255, 0, 0, 255], 3);
+            cv.line(frame, pts[3], pts[0], [255, 0, 0, 255], 3);
+
 
             // Show the frame on the canvas
             cv.imshow('videoCanvas', frame);
