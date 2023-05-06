@@ -43,8 +43,6 @@
 <script setup>
 import { fabric } from 'fabric';
 
-import KNN from '~/utils/KNN';
-
 const sleep = (ms) => new Promise(resolve => setTimeout(() => resolve(), ms));
 
 //
