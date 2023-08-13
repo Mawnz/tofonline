@@ -3,37 +3,24 @@
     <DropZone class="px-5" v-model="data.video" v-if="!data.video"></DropZone>
     <video class="hidden" muted :src="data.video" controls="true"></video>
     <canvas class="hidden"></canvas>
-    <div
-      :class="[!data.video ? 'hidden' : '']"
-      class="flex flex-col justify-stretch items-center"
-    >
-      <fa-icon
-        v-if="data.loading"
-        class="animate-spin text-5xl"
-        :icon="['fa', 'fa-circle-notch']"
-      ></fa-icon>
+    <div :class="[!data.video ? 'hidden' : '']" class="flex flex-col justify-stretch items-center">
+      <fa-icon v-if="data.loading" class="animate-spin text-5xl" :icon="['fa', 'fa-circle-notch']"></fa-icon>
       <canvas class="w-[80%]" id="videoCanvas"></canvas>
       <span>{{ tof.elapsedTime > 0 ? tof.elapsedTime / 1000 : 0 }}s</span>
       <div class="flex justify-between w-full px-20 py-5">
-        <button
-          v-if="data.video"
+        <button v-if="data.video"
           class="text-secondary-light bg-primary-light dark:text-secondary-dark dark:bg-primary-dark font-bold py-3 px-5 rounded-full float-right"
-          @click="cancel"
-        >
+          @click="cancel">
           Cancel
         </button>
-        <button
-          v-if="data.video && !data.setup"
+        <button v-if="data.video && !data.setup"
           class="text-secondary-light bg-primary-light dark:text-secondary-dark dark:bg-primary-dark font-bold py-3 px-5 rounded-full float-right"
-          @click="start"
-        >
+          @click="start">
           Done
         </button>
-        <button
-          v-if="data.setup && !tof.started"
+        <button v-if="data.setup && !tof.started"
           class="text-secondary-light bg-primary-light dark:text-secondary-dark dark:bg-primary-dark font-bold py-3 px-5 rounded-full float-right"
-          @click="tof.started = true"
-        >
+          @click="tof.started = true">
           Start routine
         </button>
       </div>
@@ -48,11 +35,7 @@
           </tr>
         </thead>
         <tbody>
-          <tr
-            v-for="(jump, i) in tof.jumps"
-            :key="i"
-            v-show="tof.currentJump >= i"
-          >
+          <tr v-for="(jump, i) in tof.jumps" :key="i" v-show="tof.currentJump >= i">
             <td>{{ i + 1 }}</td>
             <td>
               {{ Math.round((jump.timeLeave - jump.timeEnter) / 10) / 100 }}s
@@ -123,7 +106,13 @@ let detector;
 onMounted(async () => {
   // const detector = await poseDetection.createDetector(poseDetection.SupportedModels.MoveNet, {modelType: poseDetection.movenet.modelType.SINGLEPOSE_THUNDER});
   await window.tf.setBackend('webgl');
-  detector = await window.poseDetection.createDetector(poseDetection.SupportedModels.MoveNet);
+  // https://github.com/tensorflow/tfjs-examples/blob/master/react-native/pose-detection/App.tsx
+  // https://storage.googleapis.com/tfjs-models/demos/pose-detection/index.html?model=movenet
+  // https://www.tensorflow.org/lite/examples/pose_estimation/overview
+  detector = await window.poseDetection.createDetector(poseDetection.SupportedModels.MoveNet, {
+    // modelType: window.poseDetection.movenet.modelType.SINGLEPOSE_THUNDER
+    modelType: window.poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING
+  });
 });
 
 //
@@ -133,6 +122,87 @@ onMounted(async () => {
 //
 // Methods
 //
+
+// draw skeletn functions
+function drawResults(poses) {
+  for(const pose of poses) {
+    drawResult(pose);
+  }
+}
+
+function drawResult(pose) {
+  if (pose.keypoints != null) {
+    drawKeypoints(pose.keypoints);
+    drawSkeleton(pose.keypoints, pose.id);
+  }
+}
+const COLOR_PALETTE = [
+  '#ffffff', '#800000', '#469990', '#e6194b', '#42d4f4', '#fabed4', '#aaffc3',
+  '#9a6324', '#000075', '#f58231', '#4363d8', '#ffd8b1', '#dcbeff', '#808000',
+  '#ffe119', '#911eb4', '#bfef45', '#f032e6', '#3cb44b', '#a9a9a9'
+];
+function drawSkeleton(keypoints, poseId) {
+  // Each poseId is mapped to a color in the color palette.
+  const color = COLOR_PALETTE[poseId % 20]
+  // 'White';
+  interact.ctx.fillStyle = color;
+  interact.ctx.strokeStyle = color;
+  interact.ctx.lineWidth = 2;
+
+  window.poseDetection.util.getAdjacentPairs('MoveNet').forEach(([
+    i, j
+  ]) => {
+    const kp1 = keypoints[i];
+    const kp2 = keypoints[j];
+
+    // If score is null, just show the keypoint.
+    const score1 = kp1.score != null ? kp1.score : 1;
+    const score2 = kp2.score != null ? kp2.score : 1;
+    const scoreThreshold = 0.2;
+
+    if (score1 >= scoreThreshold && score2 >= scoreThreshold) {
+      interact.ctx.beginPath();
+      interact.ctx.moveTo(kp1.x, kp1.y);
+      interact.ctx.lineTo(kp2.x, kp2.y);
+      interact.ctx.stroke();
+    }
+  });
+}
+// draw keypoints on video
+function drawKeypoints(keypoints) {
+  const keypointInd =
+    window.poseDetection.util.getKeypointIndexBySide('MoveNet');
+  interact.ctx.fillStyle = 'Red';
+  interact.ctx.strokeStyle = 'White';
+  interact.ctx.lineWidth = 2;
+
+  for (const i of keypointInd.middle) {
+    drawKeypoint(keypoints[i]);
+  }
+
+  interact.ctx.fillStyle = 'Green';
+  for (const i of keypointInd.left) {
+    drawKeypoint(keypoints[i]);
+  }
+
+  interact.ctx.fillStyle = 'Orange';
+  for (const i of keypointInd.right) {
+    drawKeypoint(keypoints[i]);
+  }
+}
+
+function drawKeypoint(keypoint) {
+  // If score is null, just show the keypoint.
+  const score = keypoint.score != null ? keypoint.score : 1;
+  const scoreThreshold = 0.2;
+
+  if (score >= scoreThreshold) {
+    const circle = new Path2D();
+    circle.arc(keypoint.x, keypoint.y, 4, 0, 2 * Math.PI); // 4 is default radius
+    interact.ctx.fill(circle);
+    interact.ctx.stroke(circle);
+  }
+}
 
 // clean up
 function cancel() {
@@ -147,15 +217,7 @@ function start() {
   data.playing = false;
   // remove listeners
   document.querySelector("video").removeEventListener("play", envSetup);
-  // tracking();
-  skeleton();
-}
-
-function skeleton() {
-  detector.estimatePoses(data.videoEl)
-    .then(poses => {
-      console.log(poses[0].keypoints)
-    });
+  tracking();
 }
 
 // start or stop video
@@ -215,20 +277,20 @@ function setupROI() {
     height,
   });
 
-  interact.roi = new fabric.Rect({
-    left: data.width / 3,
-    top: data.height / 1.3,
-    fill: "rgba(180, 255, 0, 0.5)",
-    strokeWidth: "2",
-    width: data.width / 5,
-    height: data.height / 3,
-    objectCaching: false,
-    stroke: "lightgreen",
-    strokeWidth: 2,
-  });
+  // interact.roi = new fabric.Rect({
+  //   left: data.width / 3,
+  //   top: data.height / 1.3,
+  //   fill: "rgba(180, 255, 0, 0.5)",
+  //   strokeWidth: "2",
+  //   width: data.width / 5,
+  //   height: data.height / 3,
+  //   objectCaching: false,
+  //   stroke: "lightgreen",
+  //   strokeWidth: 2,
+  // });
 
-  interact.canvas.add(interact.roi);
-  interact.canvas.setActiveObject(interact.roi);
+  // interact.canvas.add(interact.roi);
+  // interact.canvas.setActiveObject(interact.roi);
 
   interact.ctx = interact.canvas.getContext("2d", {
     willReadFrequently: true,
@@ -238,64 +300,81 @@ function setupROI() {
 // Set up tracking MIL and start tracking
 async function tracking() {
   const video = document.querySelector("video");
-	
-	if(data.height > document.clientHeight) {
-		data.height = data.height / 2;
-	}
-
   video.currentTime = 0;
-  video.width = data.width;
-  video.height = data.height;
 
-  const dims = {
-    height: interact.roi.getScaledHeight(),
-    width: interact.roi.getScaledWidth(),
-  };
+  if(data.height > window.clientHeight * 0.8) {
+    console.log('omg swag');
+    video.height = data.height / 2;
+    video.width = data.width / 2;
+  } else {
+    video.width = data.width;
+    video.height = data.height;
+  }
+
+
+  // const dims = {
+  //   height: interact.roi.getScaledHeight(),
+  //   width: interact.roi.getScaledWidth(),
+  // };
   // Convert the initial region coordinates to OpenCV format
-  const roi = new cv.Rect(
-    interact.roi.left,
-    interact.roi.top,
-    dims.width,
-    dims.height
-  );
+  // const roi = new cv.Rect(
+  //   interact.roi.left,
+  //   interact.roi.top,
+  //   dims.width,
+  //   dims.height
+  // );
   // Create a new tracker, for trampoline
   // let tracker = new cv.TrackerMIL();
-  let tracker = new KCF();
-  let cap = new cv.VideoCapture(video);
-  let frame = new cv.Mat(data.height, data.width, cv.CV_8UC4);
-  cap.read(frame);
+  // let tracker = new KCF();
+  // let cap = new cv.VideoCapture(video);
+  // let frame = new cv.Mat(data.height, data.width, cv.CV_8UC4);
+  // cap.read(frame);
 
   // Initialize the tracker with the first frame and region of interest
-  let gray = new cv.Mat();
-  cv.cvtColor(frame, gray, cv.COLOR_RGBA2GRAY);
-  tracker.init(gray, roi);
+  // let gray = new cv.Mat();
+  // cv.cvtColor(frame, gray, cv.COLOR_RGBA2GRAY);
+  // tracker.init(gray, roi);
 
   // Function to perform object tracking on subsequent frames
   async function track(ts) {
     // Create a new matrix from the frame data
-    cap.read(frame);
+    // cap.read(frame);
     // Create a grayscale image for processing
-    cv.cvtColor(frame, gray, cv.COLOR_RGBA2GRAY);
+    // cv.cvtColor(frame, gray, cv.COLOR_RGBA2GRAY);
 
     // Initialize variables for storing tracking results
-    const area = tracker.update(gray);
+    // const area = tracker.update(gray);
 
     // Perform tracking
     // Draw a rectangle around the tracked object
-    cv.rectangle(
-      frame,
-      { x: area.x, y: area.y },
-      { x: area.x + area.width, y: area.y + area.height },
-      [255, 0, 0, 255], // BGR color (blue in this case)
-      2
-    );
+    // cv.rectangle(
+    //   frame,
+    //   { x: area.x, y: area.y },
+    //   { x: area.x + area.width, y: area.y + area.height },
+    //   [255, 0, 0, 255], // BGR color (blue in this case)
+    //   2
+    // );
     // check movement in ROI ( the trampoline )
-    calcTof(area.difference, ts);
+    // calcTof(area.difference, ts);
     // Display the frame with the tracking rectangle
-    cv.imshow("videoCanvas", frame);
-    requestAnimationFrame(track);
+    // only do with skeleton for now
+    interact.ctx.drawImage(video, 0, 0, data.width, data.height);
+    let poses;
+    try {
+      poses = await detector.estimatePoses(video, { maxPoses: 1, flipHorizontal: false })
+    } catch(e) {
+      console.log(e)
+      detector.dispose();
+      video.pause();
+    }
+    if(poses && poses.length) {
+      await drawResults(poses);
+    }
+    // cv.imshow("videoCanvas", frame);
+    if(!video.ended) {
+      requestAnimationFrame(track);
+    }
   }
-
   video.play();
   requestAnimationFrame(track);
 }
@@ -306,11 +385,11 @@ function calcTof(diff, ts) {
     if (tof.timerActive) {
       tof.elapsedTime = Math.round(
         ts -
-          tof.jumps[0].timeLeave -
-          tof.jumps.reduce(
-            (time, jump) => time + (jump.timeLeave - jump.timeEnter),
-            0
-          )
+        tof.jumps[0].timeLeave -
+        tof.jumps.reduce(
+          (time, jump) => time + (jump.timeLeave - jump.timeEnter),
+          0
+        )
       );
     }
     const moved = diff > 8;
@@ -461,6 +540,7 @@ async function setupOpencv() {
       console.error(err);
     }
   }
+  video.defaultPlaybackRate = 0.5
   video.play();
   // Start processing the video
   requestAnimationFrame(processVideo);
