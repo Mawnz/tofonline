@@ -68,6 +68,7 @@
 <script setup>
 import { fabric } from "fabric";
 import KCF from "@/util/KCF";
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(() => resolve(), ms));
 
 //
@@ -116,6 +117,15 @@ const interact = reactive({
   trampoline: null,
 });
 
+let detector;
+
+// Lifecycle hooks
+onMounted(async () => {
+  // const detector = await poseDetection.createDetector(poseDetection.SupportedModels.MoveNet, {modelType: poseDetection.movenet.modelType.SINGLEPOSE_THUNDER});
+  await window.tf.setBackend('webgl');
+  detector = await window.poseDetection.createDetector(poseDetection.SupportedModels.MoveNet);
+});
+
 //
 // computed
 //
@@ -137,8 +147,17 @@ function start() {
   data.playing = false;
   // remove listeners
   document.querySelector("video").removeEventListener("play", envSetup);
-  tracking();
+  // tracking();
+  skeleton();
 }
+
+function skeleton() {
+  detector.estimatePoses(data.videoEl)
+    .then(poses => {
+      console.log(poses[0].keypoints)
+    });
+}
+
 // start or stop video
 function startStop() {
   if (data.playing) {

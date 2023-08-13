@@ -1,5 +1,6 @@
 // https://huemint.com/website-1/
 // https://fontjoy.com/
+// 664581
 module.exports = {
 	darkMode: 'class',
 	theme: {
