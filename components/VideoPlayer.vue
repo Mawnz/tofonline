@@ -1,11 +1,13 @@
 <template>
   <div class="text-secondary-light dark:text-secondary-dark">
     <DropZone class="px-5" v-model="data.video" v-if="!data.video"></DropZone>
-    <video class="hidden" muted :src="data.video" controls="true"></video>
     <canvas class="hidden"></canvas>
     <div :class="[!data.video ? 'hidden' : '']" class="flex flex-col justify-stretch items-center">
       <fa-icon v-if="data.loading" class="animate-spin text-5xl" :icon="['fa', 'fa-circle-notch']"></fa-icon>
-      <canvas class="w-[80%]" id="videoCanvas"></canvas>
+      <video height="auto" class="invisible" width=100% muted :src="data.video" controls="true"></video>
+      <canvas height="auto" width=100% id="videoCanvas"></canvas>
+      <!-- <canvas height="auto" width=100% id="skeletonCanvas"></canvas> -->
+      <video v-if="data.srcObject" id="smallVideo" height="auto" width=100% muted></video>
       <span>{{ tof.elapsedTime > 0 ? tof.elapsedTime / 1000 : 0 }}s</span>
       <div class="flex justify-between w-full px-20 py-5">
         <button v-if="data.video"
@@ -73,6 +75,10 @@ const data = reactive({
   frame: null,
   userInteract: false,
   prevFrame: null,
+  diff: {
+    width: 1, height: 1
+  },
+  srcObject: null
 });
 //
 // Tof related data
@@ -97,6 +103,8 @@ const interact = reactive({
   rect: null,
   canvas: null,
   ctx: null,
+  skeletonCanvas: null,
+  skeletonCtx: null,
   trampoline: null,
 });
 
@@ -124,16 +132,16 @@ onMounted(async () => {
 //
 
 // draw skeletn functions
-function drawResults(poses) {
-  for(const pose of poses) {
-    drawResult(pose);
+function drawResults(poses, ctx) {
+  for (const pose of poses) {
+    drawResult(pose, ctx);
   }
 }
 
-function drawResult(pose) {
+function drawResult(pose, ctx) {
   if (pose.keypoints != null) {
-    drawKeypoints(pose.keypoints);
-    drawSkeleton(pose.keypoints, pose.id);
+    drawKeypoints(pose.keypoints, ctx);
+    drawSkeleton(pose.keypoints, pose.id, ctx);
   }
 }
 const COLOR_PALETTE = [
@@ -141,13 +149,13 @@ const COLOR_PALETTE = [
   '#9a6324', '#000075', '#f58231', '#4363d8', '#ffd8b1', '#dcbeff', '#808000',
   '#ffe119', '#911eb4', '#bfef45', '#f032e6', '#3cb44b', '#a9a9a9'
 ];
-function drawSkeleton(keypoints, poseId) {
+function drawSkeleton(keypoints, poseId, ctx) {
   // Each poseId is mapped to a color in the color palette.
   const color = COLOR_PALETTE[poseId % 20]
   // 'White';
-  interact.ctx.fillStyle = color;
-  interact.ctx.strokeStyle = color;
-  interact.ctx.lineWidth = 2;
+  ctx.fillStyle = color;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
 
   window.poseDetection.util.getAdjacentPairs('MoveNet').forEach(([
     i, j
@@ -161,46 +169,46 @@ function drawSkeleton(keypoints, poseId) {
     const scoreThreshold = 0.2;
 
     if (score1 >= scoreThreshold && score2 >= scoreThreshold) {
-      interact.ctx.beginPath();
-      interact.ctx.moveTo(kp1.x, kp1.y);
-      interact.ctx.lineTo(kp2.x, kp2.y);
-      interact.ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(kp1.x * data.diff.width, kp1.y * data.diff.height);
+      ctx.lineTo(kp2.x * data.diff.width, kp2.y * data.diff.height);
+      ctx.stroke();
     }
   });
 }
 // draw keypoints on video
-function drawKeypoints(keypoints) {
+function drawKeypoints(keypoints, ctx) {
   const keypointInd =
     window.poseDetection.util.getKeypointIndexBySide('MoveNet');
-  interact.ctx.fillStyle = 'Red';
-  interact.ctx.strokeStyle = 'White';
-  interact.ctx.lineWidth = 2;
+  ctx.fillStyle = 'Red';
+  ctx.strokeStyle = 'White';
+  ctx.lineWidth = 2;
 
   for (const i of keypointInd.middle) {
-    drawKeypoint(keypoints[i]);
+    drawKeypoint(keypoints[i], ctx);
   }
 
-  interact.ctx.fillStyle = 'Green';
+  ctx.fillStyle = 'Green';
   for (const i of keypointInd.left) {
-    drawKeypoint(keypoints[i]);
+    drawKeypoint(keypoints[i], ctx);
   }
 
-  interact.ctx.fillStyle = 'Orange';
+  ctx.fillStyle = 'Orange';
   for (const i of keypointInd.right) {
-    drawKeypoint(keypoints[i]);
+    drawKeypoint(keypoints[i], ctx);
   }
 }
 
-function drawKeypoint(keypoint) {
+function drawKeypoint(keypoint, ctx) {
   // If score is null, just show the keypoint.
   const score = keypoint.score != null ? keypoint.score : 1;
   const scoreThreshold = 0.2;
 
   if (score >= scoreThreshold) {
     const circle = new Path2D();
-    circle.arc(keypoint.x, keypoint.y, 4, 0, 2 * Math.PI); // 4 is default radius
-    interact.ctx.fill(circle);
-    interact.ctx.stroke(circle);
+    circle.arc(keypoint.x * data.diff.width, keypoint.y * data.diff.height, 4, 0, 2 * Math.PI); // 4 is default radius
+    ctx.fill(circle);
+    ctx.stroke(circle);
   }
 }
 
@@ -270,59 +278,70 @@ function setupROI() {
   fabric.Object.prototype.cornerStyle = "circle";
 
   interact.canvas = new fabric.Canvas("videoCanvas", {
-    containerClass: "canvas-container flex w-[80%]",
-  });
-  interact.canvas.setDimensions({
-    width,
-    height,
+    containerClass: "canvas-container flex",
   });
 
-  // interact.roi = new fabric.Rect({
-  //   left: data.width / 3,
-  //   top: data.height / 1.3,
-  //   fill: "rgba(180, 255, 0, 0.5)",
-  //   strokeWidth: "2",
-  //   width: data.width / 5,
-  //   height: data.height / 3,
-  //   objectCaching: false,
-  //   stroke: "lightgreen",
-  //   strokeWidth: 2,
+  // interact.skeletonCanvas = new fabric.Canvas("skeletonCanvas", {
+  //   containerClass: "canvas-container flex",
   // });
 
-  // interact.canvas.add(interact.roi);
-  // interact.canvas.setActiveObject(interact.roi);
+  interact.canvas.setDimensions({
+    width: width / 2,
+    height: height / 2
+  });
+
+  // interact.skeletonCanvas.setDimensions({
+  //   width: width / 2,
+  //   height: height / 2
+  // });
+
+  interact.roi = new fabric.Rect({
+    left: data.width / 3,
+    top: data.height / 1.3,
+    fill: "rgba(180, 255, 0, 0.5)",
+    strokeWidth: "2",
+    width: data.width / 5,
+    height: data.height / 3,
+    objectCaching: false,
+    stroke: "lightgreen",
+    strokeWidth: 2,
+  });
+
+  interact.canvas.add(interact.roi);
+  interact.canvas.setActiveObject(interact.roi);
 
   interact.ctx = interact.canvas.getContext("2d", {
     willReadFrequently: true,
   });
+
+  // interact.skeletonCtx = interact.skeletonCanvas.getContext("2d", {
+  //   willReadFrequently: true,
+  // });
 }
 
 // Set up tracking MIL and start tracking
 async function tracking() {
   const video = document.querySelector("video");
-  video.currentTime = 0;
-
-  if(data.height > window.clientHeight * 0.8) {
-    console.log('omg swag');
-    video.height = data.height / 2;
-    video.width = data.width / 2;
-  } else {
-    video.width = data.width;
-    video.height = data.height;
+  // calc diff to original video
+  data.diff = {
+    width: data.width / video.videoWidth,
+    height: data.height / video.videoHeight
   }
+  video.currentTime = 0;
+  video.height = data.height;
+  video.width = data.width;
 
-
-  // const dims = {
-  //   height: interact.roi.getScaledHeight(),
-  //   width: interact.roi.getScaledWidth(),
-  // };
+  const dims = {
+    height: interact.roi.getScaledHeight(),
+    width: interact.roi.getScaledWidth(),
+  };
   // Convert the initial region coordinates to OpenCV format
-  // const roi = new cv.Rect(
-  //   interact.roi.left,
-  //   interact.roi.top,
-  //   dims.width,
-  //   dims.height
-  // );
+  const roi = new cv.Rect(
+    interact.roi.left,
+    interact.roi.top,
+    dims.width,
+    dims.height
+  );
   // Create a new tracker, for trampoline
   // let tracker = new cv.TrackerMIL();
   // let tracker = new KCF();
@@ -335,8 +354,23 @@ async function tracking() {
   // cv.cvtColor(frame, gray, cv.COLOR_RGBA2GRAY);
   // tracker.init(gray, roi);
 
+
+  // data.diff.width /= 2;
+  // data.diff.height /= 2;
+
   // Function to perform object tracking on subsequent frames
+  // use this for when debuggin later...
+  const canvasDims = {
+    width: data.width / 2, height: data.height / 2
+  };
+
+  const smallVideo = document.querySelector('#smallVideo');
+
   async function track(ts) {
+    if (!smallVideo.srcObject) {
+      let stream = document.querySelector('canvas#videoCanvas').captureStream(video.defaultPlaybackRate);
+      smallVideo.srcObject = stream;
+    }
     // Create a new matrix from the frame data
     // cap.read(frame);
     // Create a grayscale image for processing
@@ -358,24 +392,27 @@ async function tracking() {
     // calcTof(area.difference, ts);
     // Display the frame with the tracking rectangle
     // only do with skeleton for now
-    interact.ctx.drawImage(video, 0, 0, data.width, data.height);
+    interact.ctx.drawImage(video, 0, 0, canvasDims.width, canvasDims.height);
+    interact.skeletonCtx.clearRect(0, 0, canvasDims.width, canvasDims.height);
     let poses;
     try {
       poses = await detector.estimatePoses(video, { maxPoses: 1, flipHorizontal: false })
-    } catch(e) {
+    } catch (e) {
       console.log(e)
       detector.dispose();
       video.pause();
     }
-    if(poses && poses.length) {
-      await drawResults(poses);
+    if (poses && poses.length) {
+      drawResults(poses, interact.ctx);
+      // drawResults(poses, interact.skeletonCtx);
     }
     // cv.imshow("videoCanvas", frame);
-    if(!video.ended) {
+    if (!video.ended) {
       requestAnimationFrame(track);
     }
   }
   video.play();
+  video.loop = true;
   requestAnimationFrame(track);
 }
 
@@ -557,11 +594,12 @@ watch(
     document
       .querySelector("video")
       .addEventListener("loadedmetadata", function () {
-        data.width = this.videoWidth;
-        data.height = this.videoHeight;
-        data.f = this.videoHeight / this.videoWidth;
-        this.playbackRate = 1;
+        data.width = this.clientWidth;
+        data.height = this.clientHeight;
 
+        data.f = this.clientHeight / this.clientWidth;
+        this.playbackRate = 1;
+        this.classList.add('hidden');
         setupROI();
 
         sleep(10).finally(() => {
@@ -577,5 +615,13 @@ watch(
 <style>
 tr {
   border-bottom: solid 1px;
+}
+
+.invisible {
+  opacity: 0;
+}
+
+#skeletonCanvas {
+  background-color: lightgray;
 }
 </style>
