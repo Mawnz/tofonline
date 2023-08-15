@@ -5,9 +5,10 @@
     <div :class="[!data.video ? 'hidden' : '']" class="flex flex-col justify-stretch items-center">
       <fa-icon v-if="data.loading" class="animate-spin text-5xl" :icon="['fa', 'fa-circle-notch']"></fa-icon>
       <video height="auto" class="invisible" width=100% muted :src="data.video" controls="true"></video>
+      <canvas height="auto" width=100% id="setupCanvas"></canvas>
       <canvas height="auto" width=100% id="videoCanvas"></canvas>
       <!-- <canvas height="auto" width=100% id="skeletonCanvas"></canvas> -->
-      <video v-if="data.srcObject" id="smallVideo" height="auto" width=100% muted></video>
+      <video id="smallVideo" height="auto" width=100% muted></video>
       <span>{{ tof.elapsedTime > 0 ? tof.elapsedTime / 1000 : 0 }}s</span>
       <div class="flex justify-between w-full px-20 py-5">
         <button v-if="data.video"
@@ -52,7 +53,6 @@
 
 <script setup>
 import { fabric } from "fabric";
-import KCF from "@/util/KCF";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(() => resolve(), ms));
 
@@ -277,8 +277,8 @@ function setupROI() {
   fabric.Object.prototype.cornerColor = "yellow";
   fabric.Object.prototype.cornerStyle = "circle";
 
-  interact.canvas = new fabric.Canvas("videoCanvas", {
-    containerClass: "canvas-container flex",
+  interact.canvas = new fabric.Canvas("setupCanvas", {
+    containerClass: "canvas-container flex setupCanvasContainer",
   });
 
   // interact.skeletonCanvas = new fabric.Canvas("skeletonCanvas", {
@@ -286,8 +286,8 @@ function setupROI() {
   // });
 
   interact.canvas.setDimensions({
-    width: width / 2,
-    height: height / 2
+    width: width,
+    height: height
   });
 
   // interact.skeletonCanvas.setDimensions({
@@ -360,17 +360,23 @@ async function tracking() {
 
   // Function to perform object tracking on subsequent frames
   // use this for when debuggin later...
-  const canvasDims = {
-    width: data.width / 2, height: data.height / 2
-  };
 
   const smallVideo = document.querySelector('#smallVideo');
 
+  const vcanvas = document.querySelector('#videoCanvas');
+  vcanvas.height = data.height;
+  vcanvas.width = data.width;
+
+  const vctx = vcanvas.getContext('2d');
+  // Hide interact canvas
+  interact.canvas.getElement().classList.add('hidden');
+
   async function track(ts) {
-    if (!smallVideo.srcObject) {
-      let stream = document.querySelector('canvas#videoCanvas').captureStream(video.defaultPlaybackRate);
-      smallVideo.srcObject = stream;
-    }
+    // if (!smallVideo.srcObject) {
+    //   let stream = vcanvas.captureStream();
+    //   smallVideo.srcObject = stream;
+    //   smallVideo.play();
+    // }
     // Create a new matrix from the frame data
     // cap.read(frame);
     // Create a grayscale image for processing
@@ -392,20 +398,20 @@ async function tracking() {
     // calcTof(area.difference, ts);
     // Display the frame with the tracking rectangle
     // only do with skeleton for now
-    interact.ctx.drawImage(video, 0, 0, canvasDims.width, canvasDims.height);
-    interact.skeletonCtx.clearRect(0, 0, canvasDims.width, canvasDims.height);
-    let poses;
-    try {
-      poses = await detector.estimatePoses(video, { maxPoses: 1, flipHorizontal: false })
-    } catch (e) {
-      console.log(e)
-      detector.dispose();
-      video.pause();
-    }
-    if (poses && poses.length) {
-      drawResults(poses, interact.ctx);
-      // drawResults(poses, interact.skeletonCtx);
-    }
+    vctx.drawImage(video, interact.roi.left, interact.roi.top, dims.width, dims.height, 0, 0, data.width, data.height);
+    // interact.skeletonCtx.clearRect(0, 0, canvasDims.width, canvasDims.height);
+    // let poses;
+    // try {
+    //   poses = await detector.estimatePoses(video, { maxPoses: 1, flipHorizontal: false })
+    // } catch (e) {
+    //   console.log(e)
+    //   detector.dispose();
+    //   video.pause();
+    // }
+    // if (poses && poses.length) {
+    //   drawResults(poses, interact.ctx);
+    //   // drawResults(poses, interact.skeletonCtx);
+    // }
     // cv.imshow("videoCanvas", frame);
     if (!video.ended) {
       requestAnimationFrame(track);
