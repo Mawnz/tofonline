@@ -16,6 +16,10 @@
           @click="cancel">
           Cancel
         </button>
+        <button
+          v-if="data.setup" @click="data.debug = !data.debug"
+          class="text-secondary-light bg-primary-light dark:text-secondary-dark dark:bg-primary-dark font-bold py-3 px-5 rounded-full float-right"
+        >{{ data.debug ? 'Hide' : 'Show' }} skeleton</button>
         <button v-if="data.video && !data.setup"
           class="text-secondary-light bg-primary-light dark:text-secondary-dark dark:bg-primary-dark font-bold py-3 px-5 rounded-full float-right"
           @click="start">
@@ -25,7 +29,7 @@
           class="text-secondary-light bg-primary-light dark:text-secondary-dark dark:bg-primary-dark font-bold py-3 px-5 rounded-full float-right"
           @click="tof.started = true">
           Start routine
-        </button>
+        </button> 
       </div>
     </div>
     <div class="flex justify-center" v-if="tof.started">
@@ -78,7 +82,8 @@ const data = reactive({
   diff: {
     width: 1, height: 1
   },
-  srcObject: null
+  srcObject: null,
+  debug: true
 });
 //
 // Tof related data
@@ -166,7 +171,7 @@ function drawSkeleton(keypoints, poseId, ctx) {
     // If score is null, just show the keypoint.
     const score1 = kp1.score != null ? kp1.score : 1;
     const score2 = kp2.score != null ? kp2.score : 1;
-    const scoreThreshold = 0.2;
+    const scoreThreshold = 0.4;
 
     if (score1 >= scoreThreshold && score2 >= scoreThreshold) {
       ctx.beginPath();
@@ -202,11 +207,11 @@ function drawKeypoints(keypoints, ctx) {
 function drawKeypoint(keypoint, ctx) {
   // If score is null, just show the keypoint.
   const score = keypoint.score != null ? keypoint.score : 1;
-  const scoreThreshold = 0.3;
+  const scoreThreshold = 0.4;
 
   if (score >= scoreThreshold) {
     const circle = new Path2D();
-    circle.arc(keypoint.x, keypoint.y, 4, 0, 2 * Math.PI); // 4 is default radius
+    circle.arc(keypoint.x, keypoint.y, 2, 0, 2 * Math.PI); // 4 is default radius
     ctx.fill(circle);
     ctx.stroke(circle);
   }
@@ -427,7 +432,9 @@ async function tracking() {
         detector.dispose();
         video.pause();
       }
-      if (poses && poses.length) {
+      // TODO use poses here to make magic happen
+      makeMagic(poses);
+      if (poses && poses.length && data.debug) {
         drawResults(poses, vctx);
         // drawResults(poses, interact.skeletonCtx);
       }
@@ -440,6 +447,10 @@ async function tracking() {
   video.play();
   video.loop = true;
   requestAnimationFrame(track);
+}
+
+function makeMagic(poses) {
+  // TODO make the magic magical
 }
 
 function calcTof(diff, ts) {
