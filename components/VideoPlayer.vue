@@ -6,9 +6,9 @@
       <fa-icon v-if="data.loading" class="animate-spin text-5xl" :icon="['fa', 'fa-circle-notch']"></fa-icon>
       <video height="auto" class="invisible" width=100% muted :src="data.video" controls="true"></video>
       <canvas height="auto" width=100% id="setupCanvas"></canvas>
-      <canvas height="auto" width=100% id="videoCanvas"></canvas>
+      <canvas height="auto" width=100% id="videoCanvas" class="hidden"></canvas>
       <!-- <canvas height="auto" width=100% id="skeletonCanvas"></canvas> -->
-      <video id="smallVideo" height="auto" width=100% muted></video>
+      <video :srcObject="data.srcObject" id="smallVideo" height="auto" width=50% muted></video>
       <span>{{ tof.elapsedTime > 0 ? tof.elapsedTime / 1000 : 0 }}s</span>
       <div class="flex justify-between w-full px-20 py-5">
         <button v-if="data.video"
@@ -170,8 +170,8 @@ function drawSkeleton(keypoints, poseId, ctx) {
 
     if (score1 >= scoreThreshold && score2 >= scoreThreshold) {
       ctx.beginPath();
-      ctx.moveTo(kp1.x * data.diff.width, kp1.y * data.diff.height);
-      ctx.lineTo(kp2.x * data.diff.width, kp2.y * data.diff.height);
+      ctx.moveTo(kp1.x, kp1.y);
+      ctx.lineTo(kp2.x, kp2.y);
       ctx.stroke();
     }
   });
@@ -202,11 +202,11 @@ function drawKeypoints(keypoints, ctx) {
 function drawKeypoint(keypoint, ctx) {
   // If score is null, just show the keypoint.
   const score = keypoint.score != null ? keypoint.score : 1;
-  const scoreThreshold = 0.2;
+  const scoreThreshold = 0.3;
 
   if (score >= scoreThreshold) {
     const circle = new Path2D();
-    circle.arc(keypoint.x * data.diff.width, keypoint.y * data.diff.height, 4, 0, 2 * Math.PI); // 4 is default radius
+    circle.arc(keypoint.x, keypoint.y, 4, 0, 2 * Math.PI); // 4 is default radius
     ctx.fill(circle);
     ctx.stroke(circle);
   }
@@ -306,7 +306,6 @@ function setupROI() {
     stroke: "lightgreen",
     strokeWidth: 2,
   });
-
   interact.canvas.add(interact.roi);
   interact.canvas.setActiveObject(interact.roi);
 
@@ -324,24 +323,29 @@ async function tracking() {
   const video = document.querySelector("video");
   // calc diff to original video
   data.diff = {
-    width: data.width / video.videoWidth,
-    height: data.height / video.videoHeight
+    width: video.videoWidth / data.width,
+    height: video.videoHeight / data.height
   }
   video.currentTime = 0;
   video.height = data.height;
   video.width = data.width;
 
+  // Dimensions for our new cropped window
   const dims = {
-    height: interact.roi.getScaledHeight(),
-    width: interact.roi.getScaledWidth(),
+    height: interact.roi.getScaledHeight() * data.diff.height,
+    width: interact.roi.getScaledWidth() * data.diff.width,
+    top: interact.roi.top * data.diff.height,
+    left: interact.roi.left * data.diff.width
   };
+
   // Convert the initial region coordinates to OpenCV format
-  const roi = new cv.Rect(
-    interact.roi.left,
-    interact.roi.top,
-    dims.width,
-    dims.height
-  );
+  // const roi = new cv.Rect(
+  //   interact.roi.left,
+  //   interact.roi.top,
+  //   dims.width,
+  //   dims.height
+  // );
+
   // Create a new tracker, for trampoline
   // let tracker = new cv.TrackerMIL();
   // let tracker = new KCF();
@@ -364,12 +368,17 @@ async function tracking() {
   const smallVideo = document.querySelector('#smallVideo');
 
   const vcanvas = document.querySelector('#videoCanvas');
-  vcanvas.height = data.height;
-  vcanvas.width = data.width;
+  vcanvas.height = dims.height;
+  vcanvas.width = dims.width;
+  vcanvas.style.transform = 'scale(0.5)'
 
   const vctx = vcanvas.getContext('2d');
-  // Hide interact canvas
-  interact.canvas.getElement().classList.add('hidden');
+  data.srcObject = vcanvas.captureStream();
+  interact.canvas.dispose();
+
+  smallVideo.addEventListener('loadedmetadata', function () {
+    this.play();
+  });
 
   async function track(ts) {
     // if (!smallVideo.srcObject) {
@@ -398,22 +407,33 @@ async function tracking() {
     // calcTof(area.difference, ts);
     // Display the frame with the tracking rectangle
     // only do with skeleton for now
-    vctx.drawImage(video, interact.roi.left, interact.roi.top, dims.width, dims.height, 0, 0, data.width, data.height);
+    vctx.drawImage(video,
+      dims.left,
+      dims.top,
+      dims.width,
+      dims.height,
+      0, 0,
+      dims.width,
+      dims.height
+    );
     // interact.skeletonCtx.clearRect(0, 0, canvasDims.width, canvasDims.height);
-    // let poses;
-    // try {
-    //   poses = await detector.estimatePoses(video, { maxPoses: 1, flipHorizontal: false })
-    // } catch (e) {
-    //   console.log(e)
-    //   detector.dispose();
-    //   video.pause();
-    // }
-    // if (poses && poses.length) {
-    //   drawResults(poses, interact.ctx);
-    //   // drawResults(poses, interact.skeletonCtx);
-    // }
+    if(smallVideo.currentTime > 0) {
+
+      let poses;
+      try {
+        poses = await detector.estimatePoses(smallVideo, { maxPoses: 1, flipHorizontal: false })
+      } catch (e) {
+        console.log(e)
+        detector.dispose();
+        video.pause();
+      }
+      if (poses && poses.length) {
+        drawResults(poses, vctx);
+        // drawResults(poses, interact.skeletonCtx);
+      }
+    }
     // cv.imshow("videoCanvas", frame);
-    if (!video.ended) {
+    if (!smallVideo.ended) {
       requestAnimationFrame(track);
     }
   }
